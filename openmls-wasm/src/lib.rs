@@ -32,6 +32,17 @@ static CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1
 #[derive(Default)]
 pub struct Provider(OpenMlsRustCrypto);
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StorageEntry {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StorageBackup {
+    entries: Vec<StorageEntry>,
+}
+
 impl AsRef<OpenMlsRustCrypto> for Provider {
     fn as_ref(&self) -> &OpenMlsRustCrypto {
         &self.0
@@ -49,6 +60,43 @@ impl Provider {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[wasm_bindgen]
+    pub fn export_storage(&self) -> Result<Vec<u8>, JsError> {
+        let values = self
+            .0
+            .storage()
+            .values
+            .read()
+            .map_err(|_| JsError::new("Storage lock error"))?;
+        let entries = values
+            .iter()
+            .map(|(k, v)| StorageEntry {
+                key: k.clone(),
+                value: v.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        serde_json::to_vec(&StorageBackup { entries })
+            .map_err(|e| JsError::new(&format!("Storage export error: {e}")))
+    }
+
+    #[wasm_bindgen]
+    pub fn import_storage(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        let backup: StorageBackup = serde_json::from_slice(bytes)
+            .map_err(|e| JsError::new(&format!("Storage import error: {e}")))?;
+        let mut values = self
+            .0
+            .storage()
+            .values
+            .write()
+            .map_err(|_| JsError::new("Storage lock error"))?;
+        values.clear();
+        for entry in backup.entries {
+            values.insert(entry.key, entry.value);
+        }
+        Ok(())
     }
 }
 
@@ -198,6 +246,15 @@ impl Group {
 
         Group { mls_group }
     }
+
+    pub fn load(provider: &Provider, group_id: &str) -> Result<Group, JsError> {
+        let group_id = GroupId::from_slice(group_id.as_bytes());
+        let mls_group = MlsGroup::load(provider.0.storage(), &group_id)
+            .map_err(|e| JsError::new(&format!("Group load error: {e}")))?
+            .ok_or_else(|| JsError::new("Group not found"))?;
+
+        Ok(Group { mls_group })
+    }
     pub fn join(
         provider: &Provider,
         mut welcome: &[u8],
@@ -219,6 +276,12 @@ impl Group {
 
     pub fn export_ratchet_tree(&self) -> RatchetTree {
         RatchetTree(self.mls_group.export_ratchet_tree().into())
+    }
+
+    pub fn store(&self, provider: &Provider) -> Result<(), JsError> {
+        self.mls_group
+            .store(provider.0.storage())
+            .map_err(|e| JsError::new(&format!("Group store error: {e}")))
     }
 
     pub fn propose_and_commit_add(
