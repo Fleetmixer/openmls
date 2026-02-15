@@ -61,6 +61,21 @@ pub fn greet() {
 pub struct Identity {
     credential_with_key: CredentialWithKey,
     keypair: openmls_basic_credential::SignatureKeyPair,
+    name: String,
+}
+
+#[derive(serde::Serialize)]
+struct IdentityBackupRef<'a> {
+    name: &'a str,
+    credential_with_key: &'a CredentialWithKey,
+    keypair: &'a SignatureKeyPair,
+}
+
+#[derive(serde::Deserialize)]
+struct IdentityBackup {
+    name: String,
+    credential_with_key: CredentialWithKey,
+    keypair: SignatureKeyPair,
 }
 
 #[wasm_bindgen]
@@ -82,6 +97,35 @@ impl Identity {
         Ok(Identity {
             credential_with_key,
             keypair,
+            name: name.to_string(),
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn to_bytes(&self) -> Result<Vec<u8>, JsError> {
+        let backup = IdentityBackupRef {
+            name: &self.name,
+            credential_with_key: &self.credential_with_key,
+            keypair: &self.keypair,
+        };
+        serde_json::to_vec(&backup)
+            .map_err(|e| JsError::new(&format!("Identity backup serialization error: {e}")))
+    }
+
+    #[wasm_bindgen]
+    pub fn from_bytes(provider: &Provider, bytes: &[u8]) -> Result<Identity, JsError> {
+        let backup: IdentityBackup = serde_json::from_slice(bytes)
+            .map_err(|e| JsError::new(&format!("Identity backup deserialization error: {e}")))?;
+
+        backup
+            .keypair
+            .store(provider.0.storage())
+            .map_err(|e| JsError::new(&format!("Identity keypair store error: {e}")))?;
+
+        Ok(Identity {
+            credential_with_key: backup.credential_with_key,
+            keypair: backup.keypair,
+            name: backup.name,
         })
     }
 
