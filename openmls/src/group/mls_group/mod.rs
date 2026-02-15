@@ -722,7 +722,7 @@ impl MlsGroup {
 
     /// Stores the state of this group. Only to be called from constructors to
     /// store the initial state of the group.
-    pub(super) fn store<Storage: crate::storage::StorageProvider>(
+    pub fn store<Storage: crate::storage::StorageProvider>(
         &self,
         storage: &Storage,
     ) -> Result<(), Storage::Error> {
